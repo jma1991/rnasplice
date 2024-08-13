@@ -27,3 +27,4 @@ custom_data:
       table_title: "Samples failed trimming threshold"
       namespace: "Samples failed trimming threshold"
       format: "{:.0f}"
+disable_version_detection: true

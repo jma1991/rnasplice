@@ -1,6 +1,6 @@
 /*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    PRINT PARAMS SUMMARY
+    IMPORT MODULES / SUBWORKFLOWS / FUNCTIONS
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 */
 
@@ -103,11 +103,13 @@ include { VISUALISE_MISO                                       } from '../subwor
 //
 // MODULE: Installed directly from nf-core/modules
 //
+include { CAT_FASTQ                           } from '../modules/nf-core/cat/fastq/main'
+include { FASTQC                              } from '../modules/nf-core/fastqc/main'
+include { MULTIQC                             } from '../modules/nf-core/multiqc/main'
 include { SALMON_QUANT as SALMON_QUANT_SALMON } from '../modules/nf-core/salmon/quant/main'
 include { SALMON_QUANT as SALMON_QUANT_STAR   } from '../modules/nf-core/salmon/quant/main'
-include { MULTIQC                             } from '../modules/nf-core/multiqc/main'
 include { CUSTOM_DUMPSOFTWAREVERSIONS         } from '../modules/nf-core/custom/dumpsoftwareversions/main'
-include { CAT_FASTQ                           } from '../modules/nf-core/cat/fastq/main'
+include { paramsSummaryMap                    } from 'plugin/nf-validation'
 
 //
 // SUBWORKFLOWS: Installed directly from nf-core/modules
@@ -116,6 +118,9 @@ include { FASTQ_FASTQC_UMITOOLS_TRIMGALORE                                } from
 include { BEDGRAPH_BEDCLIP_BEDGRAPHTOBIGWIG as BEDGRAPH_TO_BIGWIG_FORWARD } from '../subworkflows/nf-core/bedgraph_bedclip_bedgraphtobigwig/main'
 include { BEDGRAPH_BEDCLIP_BEDGRAPHTOBIGWIG as BEDGRAPH_TO_BIGWIG_REVERSE } from '../subworkflows/nf-core/bedgraph_bedclip_bedgraphtobigwig/main'
 include { BAM_SORT_STATS_SAMTOOLS                                         } from '../subworkflows/nf-core/bam_sort_stats_samtools/main'
+include { paramsSummaryMultiqc                                            } from '../subworkflows/nf-core/utils_nfcore_pipeline'
+include { softwareVersionsToYAML                                          } from '../subworkflows/nf-core/utils_nfcore_pipeline'
+include { methodsDescriptionText                                          } from '../subworkflows/local/utils_nfcore_rnasplice_pipeline'
 
 /*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -734,17 +739,24 @@ workflow RNASPLICE {
     )
 
     //
+    // Collate and save software versions
+    //
+    softwareVersionsToYAML(ch_versions)
+        .collectFile(
+            storeDir: "${params.outdir}/pipeline_info",
+            name: 'nf_core_pipeline_software_mqc_versions.yml',
+            sort: true,
+            newLine: true
+        ).set { ch_collated_versions }
+
+    //
     // MODULE: MultiQC
     //
 
-    workflow_summary    = WorkflowRnasplice.paramsSummaryMultiqc(workflow, summary_params)
-    ch_workflow_summary = Channel.value(workflow_summary)
-
-    methods_description    = WorkflowRnasplice.methodsDescriptionText(workflow, ch_multiqc_custom_methods_description, params)
-    ch_methods_description = Channel.value(methods_description)
+    summary_params      = paramsSummaryMap(workflow, parameters_schema: "nextflow_schema.json")
+    ch_workflow_summary = Channel.value(paramsSummaryMultiqc(summary_params))
 
     ch_multiqc_files = Channel.empty()
-
     ch_multiqc_files = ch_multiqc_files.mix(ch_multiqc_custom_config.collect().ifEmpty([]))
     ch_multiqc_files = ch_multiqc_files.mix(ch_workflow_summary.collectFile(name: 'workflow_summary_mqc.yaml'))
     ch_multiqc_files = ch_multiqc_files.mix(ch_methods_description.collectFile(name: 'methods_description_mqc.yaml'))
@@ -792,24 +804,10 @@ workflow RNASPLICE {
         ch_multiqc_custom_config.toList(),
         ch_multiqc_logo.toList()
     )
-    multiqc_report = MULTIQC.out.report.toList()
-}
 
-/*
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    COMPLETION EMAIL AND SUMMARY
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-*/
-
-workflow.onComplete {
-    if (params.email || params.email_on_fail) {
-        NfcoreTemplate.email(workflow, params, summary_params, projectDir, log, multiqc_report)
-    }
-    NfcoreTemplate.dump_parameters(workflow, params)
-    NfcoreTemplate.summary(workflow, params, log)
-    if (params.hook_url) {
-        NfcoreTemplate.IM_notification(workflow, params, summary_params, projectDir, log)
-    }
+    emit:
+    multiqc_report = MULTIQC.out.report.toList() // channel: /path/to/multiqc_report.html
+    versions       = ch_versions                 // channel: [ path(versions.yml) ]
 }
 
 /*
